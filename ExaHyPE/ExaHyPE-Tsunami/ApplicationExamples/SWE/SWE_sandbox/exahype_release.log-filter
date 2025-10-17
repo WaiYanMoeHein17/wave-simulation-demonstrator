@@ -1,0 +1,9 @@
+# Level Trace Rank Black or white list entry
+# (info or debug) (-1 means all ranks)
+debug tarch -1 black
+debug peano -1 black
+info tarch -1 black
+info peano -1 black
+info peano::utils::UserInterface -1 black
+info exahype -1 black
+info mpibalancing -1 black

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ar sandbox</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #scene-container {
+      width: 100%;
+      height: 60vh;
+      overflow: hidden;
+    }
+
+    .controls {
+      width: 90%;
+      max-width: 600px;
+      margin-top: 20px;
+    }
+
+    h2 {
+      margin-top: 1.5rem;
+      font-size: 1.2rem;
+      color: #444;
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 0.3rem;
+    }
+
+    button {
+      display: block;
+      width: 100%;
+      margin: 0.3rem 0;
+      padding: 0.7rem;
+      font-size: 1rem;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+  </style>
+  <script>
+    async function triggerApi(endpoint, method = 'POST') {
+      try {
+        const response = await fetch(new URL(endpoint, window.location.origin), { method });
+        if (!response.ok) throw new Error('Network response was not ok');
+        console.log('API Response:', await response.text());
+      } catch (error) {
+        console.error('Error:', error);
+      }
+    }
+
+    let scene, camera, renderer, terrainPlane, waterPlane;
+
+    function initializeScene() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      renderer = new THREE.WebGLRenderer();
+      renderer.setClearColor(0xffffff, 1);
+      renderer.setSize(window.innerWidth, window.innerHeight * 0.6);
+      document.getElementById('scene-container').appendChild(renderer.domElement);
+
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(0, 1, 1).normalize();
+      scene.add(light);
+      scene.add(new THREE.AmbientLight(0x404040, 2.0));
+
+      camera.position.set(0, 60, 100);
+      animate();
+    }
+
+    function createHeightmap(heightUrl, isWater = false, visUrl = null) {
+      const loader = new THREE.TextureLoader();
+      loader.load(heightUrl, (heightTexture) => {
+        if (visUrl) {
+          loader.load(visUrl, (visTexture) => {
+            applyPlane(heightTexture, isWater, visTexture);
+          });
+        } else {
+          applyPlane(heightTexture, isWater);
+        }
+      });
+    }
+
+    function applyPlane(displacementMap, isWater = false, colorMap = null) {
+      const geometry = new THREE.PlaneGeometry(100, 100, 256, 256);
+      const material = new THREE.MeshStandardMaterial({
+        map: colorMap || displacementMap,
+        displacementMap: displacementMap,
+        displacementScale: isWater ? 40 : 20,
+        side: isWater ? THREE.FrontSide : THREE.DoubleSide,
+        transparent: isWater,
+        opacity: isWater ? 0.5 : 1,
+        color: isWater ? 0x0000ff : 0xffffff,
+      });
+
+      const plane = new THREE.Mesh(geometry, material);
+      plane.rotation.x = -Math.PI / 2;
+
+      if (isWater) {
+        if (waterPlane) scene.remove(waterPlane);
+        waterPlane = plane;
+      } else {
+        if (terrainPlane) scene.remove(terrainPlane);
+        terrainPlane = plane;
+      }
+
+      scene.add(plane);
+    }
+
+    async function fetchCompositeTerrain() {
+      try {
+        const heightRes = await fetch('/terrain');
+        const visRes = await fetch('/vis-terrain');
+        if (!heightRes.ok || !visRes.ok) throw new Error('Failed to fetch one or both images');
+
+        const heightUrl = URL.createObjectURL(await heightRes.blob());
+        const visUrl = URL.createObjectURL(await visRes.blob());
+
+        createHeightmap(heightUrl, false, visUrl);
+      } catch (error) {
+        console.error('Error fetching composite terrain:', error);
+      }
+    }
+
+    async function fetchImage(endpoint, isWater = false) {
+      try {
+        const response = await fetch(endpoint);
+        if (!response.ok) throw new Error('Failed to fetch image');
+        const imageUrl = URL.createObjectURL(await response.blob());
+        createHeightmap(imageUrl, isWater);
+      } catch (error) {
+        console.error('Error fetching image:', error);
+      }
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      scene.rotation.y += 0.005;
+      renderer.render(scene, camera);
+      camera.lookAt(scene.position);
+    }
+
+    window.onload = initializeScene;
+  </script>
+</head>
+<body>
+  <div id="scene-container"></div>
+
+  <div class="controls">
+    <button onclick="fetchCompositeTerrain(); fetchImage('/water', true);">Update</button>
+    <h2>Image Controls</h2>
+    <button onclick="triggerApi('/toggle-greyscale')">Toggle Greyscale</button>
+    <button onclick="triggerApi('/next-colormap')">Next Colormap</button>
+    <button onclick="triggerApi('/toggle-gradient')">Toggle Gradient</button>
+
+    <button onclick="triggerApi('/save-image')">Save Image</button>
+
+    <h2>Contour Controls</h2>
+    <button onclick="triggerApi('/increment-contour')">Increment Contour</button>
+    <button onclick="triggerApi('/decrement-contour')">Decrement Contour</button>
+    <button onclick="triggerApi('/reset-contour')">Reset Contour</button>
+    <button onclick="triggerApi('/zero-contour')">Zero Contour</button>
+
+    <h2>Animation Controls</h2>
+    <button onclick="triggerApi('/toggle-pause')">Toggle Pause</button>
+
+    <h2>Texture Controls</h2>
+    <button onclick="triggerApi('/toggle-water')">Toggle Water Texture</button>
+    <button onclick="triggerApi('/toggle-field')">Toggle Field</button>
+
+    <h2>Canvas Controls</h2>
+    <button onclick="triggerApi('/increase-water-canvas')">Increase Water Canvas</button>
+    <button onclick="triggerApi('/decrease-water-canvas')">Decrease Water Canvas</button>
+    <button onclick="triggerApi('/clear-water-canvas')">Clear Water Canvas</button>
+
+    <h2>Simulation Controls</h2>
+    <button onclick="triggerApi('/run-simulation')">Run Simulation</button>
+    <button onclick="triggerApi('/reset-simulation')">Reset Simulation</button>
+    <button onclick="triggerApi('/load-sequence')">Load Sequence</button>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,135 @@
+{# /**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/ #}
+{% import "subtemplates/index.template" as i with context %}
+{% macro idxX(z,y,x,n) %}{{i.index_4(z,y,x,n,nDof,ghostLayerWidth,nData)}}{% endmacro %}
+{% macro idxY(z,y,x,n) %}{{i.index_4(z,y,x,n,ghostLayerWidth,nDof,nData)}}{% endmacro %}
+{% macro idxZ(z,y,x,n) %}{{i.index_4(z,y,x,n,nDof,nDof,nData)}}{% endmacro %}
+{% set x,y,z,xM,yM,zM="x","y","z","xM","yM","zM" %}{# shortcut for the idx #}
+
+
+#include "{{pathToOptKernel}}/Kernels.h"
+
+#include "{{solverHeader}}"
+
+
+void {{codeNamespace}}::boundaryConditions(
+    {{solverName}}& solver,
+    double* stateOut,
+    const double* const stateIn,
+    const double* const cellCentre,
+    const double dx,
+    const double t,
+    const double dt,
+    const int faceIndex,
+    const int normalNonZero
+) {
+  const int orientation = faceIndex % 2; // orientation=1 if face normal follows the direction
+  const int direction   = (faceIndex-orientation) / 2;
+
+  double xOutside[{{nDim}}]; // centre of the outside FV subcell
+
+  // x-left (
+  if (direction==0 && orientation==0) {
+    for (int z = 0; z < {{nDof3D}}; z++) {
+      xOutside[2] = cellCentre[2] + dx * (z*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+      for (int y = 0; y < {{nDof}}; y++) {
+        xOutside[1] = cellCentre[1] + dx * (y*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+        for (int x = 0; x < {{ghostLayerWidth}}; x++) {
+          const int xM = {{ghostLayerWidth-1}}-x; // mirror index x as x=0 is (in general) further away from patch than x=ghostLayerWidth-1
+          xOutside[0] = cellCentre[0] - dx * (xM*{{1.0/nDof}} + {{0.5+0.5/nDof}}); // - sign and xM
+          solver.{{solverName}}::boundaryValues(xOutside, t, dt, faceIndex, normalNonZero, // mirrors stateIn DoF at boundary
+              stateIn+{{idxX(z,y,xM,0)}}, stateOut+{{idxX(z,y,x,0)}});
+        }
+      }
+    }
+  }
+  // x-right
+  else if (direction==0 && orientation==1) {
+    for (int z = 0; z < {{nDof3D}}; z++) {
+      xOutside[2] = cellCentre[2] + dx * (z*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+      for (int y = 0; y < {{nDof}}; y++) {
+        xOutside[1] = cellCentre[1] + dx * (y*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+        for (int x = 0; x < {{ghostLayerWidth}}; x++) {
+          const int xM = {{ghostLayerWidth-1}}-x; // mirror index x as x=0 is (in general) further away from patch than x=ghostLayerWidth-1
+          xOutside[0] = cellCentre[0] + dx * (x*{{1.0/nDof}} + {{0.5+0.5/nDof}}); // + sign and x
+          solver.{{solverName}}::boundaryValues(xOutside, t, dt, faceIndex, normalNonZero, // mirrors stateIn DoF at boundary
+              stateIn+{{idxX(z,y,xM,0)}}, stateOut+{{idxX(z,y,x,0)}});
+        }
+      }
+    }
+  }
+  // y-front
+  else if (direction==1 && orientation==0) {
+    for (int z = 0; z < {{nDof3D}}; z++) {
+      xOutside[2] = cellCentre[2] + dx * (z*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+      for (int y = 0; y < {{ghostLayerWidth}}; y++) {
+        const int yM = {{ghostLayerWidth-1}}-y; // mirror index y as y=0 is (in general) further away from patch than y=ghostLayerWidth-1
+        xOutside[1] = cellCentre[1] - dx * (yM*{{1.0/nDof}} + {{0.5+0.5/nDof}}); // - sign and yM
+        for (int x = 0; x < {{nDof}}; x++) {
+          xOutside[0] = cellCentre[0] + dx * (x*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+          solver.{{solverName}}::boundaryValues(xOutside, t, dt, faceIndex, normalNonZero, // mirrors stateIn DoF at boundary
+              stateIn+{{idxY(z,yM,x,0)}}, stateOut+{{idxY(z,y,x,0)}});
+        }
+      }
+    }
+  }
+  // y-back
+  else if (direction==1 && orientation==1) {
+    for (int z = 0; z < {{nDof3D}}; z++) {
+      xOutside[2] = cellCentre[2] + dx * (z*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+      for (int y = 0; y < {{ghostLayerWidth}}; y++) {
+        const int yM = {{ghostLayerWidth-1}}-y; // mirror index y as y=0 is (in general) further away from patch than y=ghostLayerWidth-1
+        xOutside[1] = cellCentre[1] + dx * (y*{{1.0/nDof}} + {{0.5+0.5/nDof}}); // + sign and y
+        for (int x = 0; x < {{nDof}}; x++) {
+          xOutside[0] = cellCentre[0] + dx * (x*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+          solver.{{solverName}}::boundaryValues(xOutside, t, dt, faceIndex, normalNonZero, // mirrors stateIn DoF at boundary
+              stateIn+{{idxY(z,yM,x,0)}}, stateOut+{{idxY(z,y,x,0)}});
+        }
+      }
+    }
+  }
+{% if nDof == 3 %}
+  // z-bottom
+  else if (direction==2 && orientation==0) {
+    for (int z = 0; z < {{ghostLayerWidth}}; z++) {
+      const int zM=ghostLayerWidth-z-1; // mirror index z as z=0 is (in general) further away from patch than z=ghostLayerWidth-1
+      xOutside[2] = cellCentre[2] - dx * (zM*{{1.0/nDof}} + {{0.5+0.5/nDof}}); // - sign and zM
+      for (int y = 0; y < {{nDof}}; y++) {
+        xOutside[1] = cellCentre[1] + dx * (y*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+        for (int x = 0; x < {{nDof}}; x++) {
+          xOutside[0] = cellCentre[0] + dx * (x*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+          solver.{{solverName}}::boundaryValues(xOutside,t,dt,faceIndex,normalNonZero, // mirrors stateIn DoF at boundary
+              stateIn+{{idxZ(zM,y,x,0)}}, stateOut+{{idxZ(z,y,x,0)}});
+        }
+      }
+    }
+  }
+  // z-top
+  else if (direction==2 && orientation==1) {
+    for (int z = 0; z < {{ghostLayerWidth}}; z++) {
+      const int zM=ghostLayerWidth-z-1; // mirror index z as z=0 is (in general) further away from patch than z=ghostLayerWidth-1
+      xOutside[2] = cellCentre[2] + dx * (z*{{1.0/nDof}} + {{0.5+0.5/nDof}}); // + sign and z
+      for (int y = 0; y < {{nDof}}; y++) {
+        xOutside[1] = cellCentre[1] + dx * (y*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+        for (int x = 0; x < {{nDof}}; x++) {
+          xOutside[0] = cellCentre[0] + dx * (x*{{1.0/nDof}} - {{0.5-0.5/nDof}});
+          solver.{{solverName}}::boundaryValues(xOutside,t,dt,faceIndex,normalNonZero, // mirrors stateIn DoF at boundary
+              stateIn+{{idxZ(zM,y,x,0)}}, stateOut+{{idxZ(z,y,x,0)}});
+        }
+      }
+  } 
+{% endif %}
+  else {
+    assertionMsg(false,"direction must be either 0 or 1.");
+  }
+}

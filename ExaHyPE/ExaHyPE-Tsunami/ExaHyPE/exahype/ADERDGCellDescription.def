@@ -1,0 +1,375 @@
+
+/////////////////////////////////////////////////
+/// ExaHyPE
+/// ... text ...
+/// Version: 13/11/15
+/////////////////////////////////////////////////
+#include "peano/utils/Globals.h"
+#include "exahype/util/CopyableAtomic.h"
+
+Packed-Type: int hint-size 32;
+
+Constant: DIMENSIONS hint-value 3;
+Constant: DIMENSIONS_TIMES_TWO hint-value 6;
+Constant: THREE_POWER_D hint-value 27;
+
+class exahype::records::ADERDGCellDescription {
+  /**
+   * @defgroup SolverInfo Meta information on and for the solver
+   */
+  ///@{
+  /**
+   * Points to a solver in the solver registry.
+   */
+  parallelise persistent int solverNumber;
+
+  /**
+   * These flags indicate on which face a neighbour merge, e.g. a Riemann solve or metadata merge, has already been
+   * performed during the current traversal.
+   *
+   * @note we use the data type signed char even though it would be more intuitive
+   * as DaStGen converts bool array specifications into bitsets.
+   * Bitsets cannot be modified by multiple threads simultaneously.
+   */
+  persistent packed signed char neighbourMergePerformed[DIMENSIONS_TIMES_TWO];
+  ///@}
+
+  /**
+   * @defgroup AMRInfo AMR information
+   *
+   * Additional information that is necessary to realise adaptive mesh
+   * refinement (AMR).
+   */
+  ///@{
+  /**
+   * The index of the ADERDGCellDescription that is the parent of
+   * this ADERDGCellDescription or "-1" if no parent is specified.
+   */
+  persistent int parentIndex;
+ 
+  /**
+   * Type of a cell description.
+   * Cell descriptions of type \p Cell hold cell and face data,
+   * while the ones of type \p Ancestor hold only face data.
+   * Both belong to the original spacetree that 
+   * is constructed according to solver-based refinement criteria.
+   * Helper cells of type Descendant also hold face data 
+   * but belong to the virtual part of the augmented spacetree that
+   * is created to store prolongated face data.
+   *
+   * ADERDGCellDescriptions of type \p EmptyAncestor and \p EmptyDescendant
+   * do not hold face data. These types are set if the cell
+   * associated to this cell description is not neighbouring
+   * a cell that holds a cell description of type \p
+   * Cell.
+   */
+  enum Type {
+    Leaf,                      //! During the time stepping iterations, a leaf cell
+    LeafChecked,               //! During the mesh refinement iterations, a leaf cell where the refinement criterion returned keep.
+    LeafInitiatesRefining,     //! During the mesh refinement iterations, a leaf cell that requested refinement.
+    LeafRefines,               //! During the mesh refinement iterations, a leaf cell that started refining.
+    LeafProlongates,           //! During the mesh refinement iterations, a cell that still has to prolongate volume data. (Necessary if we use background jobs).  
+    Parent,                    //! During the time stepping iterations, a leaf cell.
+    ParentChecked,             //! During the mesh refinement iterations, a parent cell where the coarsening was vetoed.
+    ParentRequestsCoarseningA, //! During the mesh refinement iterations, a parent cell that requests coarsening.  Children get two iterations to veto. First iteration.
+    ParentRequestsCoarseningB, //! During the mesh refinement iterations, a parent cell that requested coarsening. Second iteration.
+    ParentCoarsens,            //! During the mesh refinement iterations, a parent cell that is coarsening.
+    Virtual,                   //! A virtual cell.
+    Erased                     //! An erased cell. Indicates that memory can be deallocated for this cell.
+  };
+ 
+  /**
+   * The type of this ADERDGCellDescription. See the documentation of Cell for
+   * more details.
+   */
+  parallelise persistent packed Type type;
+  
+  /**
+   * We use this state to memorise the type of a coarse grid cell description
+   * in parallel mesh refinement iterations, i.e.
+   * this state is set in receiveDataFromMaster(...) and read
+   * in mergeWithWorker(...). Outside of these two routines,
+   * this state doesn't play any role at all.
+   */
+  parallelise persistent packed Type parentType;
+  
+  // While the above definitions are mainly flags and states, below we find the actual data.
+  
+  /**
+   * @name CellInfo Cell Info
+   *
+   * Information on the grid cell this ADERDGCellDescription is associated
+   * with.
+   */
+  ///@{
+  /**
+   * Space-tree level of the cell this ADERDGCellDescription is associated
+   * with.
+   */
+  parallelise persistent int level; // TODO(Dominic): Do not send around
+  /**
+   * Offset of the "lower left" node of the lower left ghost cell from the
+   * lower left node of the cell.
+   */
+  parallelise persistent double offset[DIMENSIONS]; // TODO(Dominic): Do not send around
+  /**
+   * Dimension of the cell associated with this ADERDGCellDescription in the
+   * respective dimension.
+   */
+  parallelise persistent double size[DIMENSIONS]; // TODO(Dominic): Do not send around
+  ///@}
+  
+  /**
+   * @defgroup TimeInfo Time Stamps and Step Sizes
+   *
+   * Time stamps and step sizes that are used for different
+   * phases of the algorithm.
+   */
+  ///@{
+  
+  /**
+   * previous time stamp.
+   */
+  parallelise persistent double previousTimeStamp;
+  
+  /**
+   * Previous time step size.
+   * 
+   * This variable is necessary for performing rollbacks.
+   */
+  parallelise persistent double previousTimeStepSize;
+  
+  /**
+   * The time step size.
+   */
+  parallelise persistent double timeStepSize;
+
+  /**
+   * Time stamp.
+   */
+  parallelise persistent double timeStamp;
+  ///@}
+  /**
+   * @defgroup VolumeDataIndices Volume Data Indices
+   *
+   * Index pointing to an array of size \f$ N_\mathrm{var}\,(N+1)^{d} \f$.
+   */
+  ///@{
+  /**
+   *  Index pointing to the solution DoF belonging to this cell.
+   *  Resembles also the state of the previous time step during update
+   * calculations.
+   *  Symbol: \f$ u_h \f$.
+   */
+  persistent int solutionIndex;
+  persistent int solutionAveragesIndex;
+  persistent int solutionCompressedIndex;
+  // pointers for direct access
+  persistent pointer solution;
+  persistent pointer solutionAverages;
+  persistent pointer solutionCompressed;
+   
+  /**
+   *  Heap index pointing to the DoF of the previous solution associated with this cell
+   *  description.
+   *  Symbol: \f$ u_h \f$.
+   *  
+   *  <h2>Limiting ADER-DG solver</h2>
+   *  These DoF only need to be stored for the subcell-limiting
+   *  ADER-DG solver since here NaNs can appear here in the solution update
+   *  DoF. We can then not use the solution Update DoF anymore for
+   *  performing a rollback to the previous solution.
+   */
+  persistent int previousSolutionIndex;
+  persistent int previousSolutionAveragesIndex;
+  persistent int previousSolutionCompressedIndex;
+  // pointers for direct access
+  persistent pointer previousSolution;
+  persistent pointer previousSolutionAverages;
+  persistent pointer previousSolutionCompressed;
+  
+  /**
+   * Index pointing to the update DoF belonging to this cell. All volume updates
+   * and face fluctuations contribute to this Symbol. Symbol:
+   * \f$ \Delta u_h \f$.
+   */
+  persistent int updateIndex;
+  persistent int updateAveragesIndex;
+  persistent int updateCompressedIndex;
+  // pointers for direct access
+  persistent pointer update;
+  persistent pointer updateAverages;
+  persistent pointer updateCompressed;
+  ///@}
+
+  /**
+   * @name FaceDataIndices Face Data Indices
+   *
+   * Index pointing to an array of size \f$ 2\,d\,N_\mathrm{var}\,(N+1)^{d-1}
+   * \f$.
+   */
+  ///@{
+  /**
+   * Index pointing to the predictor DoF extrapolated to the bounding faces of
+   * the
+   * cell.
+   */
+  persistent int extrapolatedPredictorIndex;
+  persistent int extrapolatedPredictorAveragesIndex;
+  persistent int extrapolatedPredictorCompressedIndex;
+  // pointers for direct access
+  persistent pointer extrapolatedPredictor;
+  persistent pointer extrapolatedPredictorAverages;
+  persistent pointer extrapolatedPredictorCompressed;
+
+
+  // TODO(Lukas) Document!
+  persistent int extrapolatedPredictorGradientIndex;
+  persistent pointer extrapolatedPredictorGradient;
+
+  /**
+   * Index pointing to the normal fluxes computed at the bounding faces of the
+   * cell.
+   */
+  persistent int fluctuationIndex;
+  persistent int fluctuationAveragesIndex;
+  persistent int fluctuationCompressedIndex;
+  // pointers for direct access
+  persistent pointer fluctuation;
+  persistent pointer fluctuationAverages;
+  persistent pointer fluctuationCompressed;
+  ///@}
+  
+  /**
+   * Pointer to DIMENSIONS_TIMES_TWO \times _numberOfUnknowns doubles.
+   *
+   * First, all the _numberOfUnknowns entries of the left face are stored, then
+   * the _numberOfUnknowns of the right face and so forth.
+   */
+  persistent int solutionMinIndex;
+  persistent int solutionMaxIndex;
+  // pointers for direct access
+  persistent pointer solutionMin;
+  persistent pointer solutionMax;
+  
+  /**
+   * \see augmentationStatus
+   */
+  persistent int facewiseAugmentationStatus[DIMENSIONS_TIMES_TWO];
+
+  /**
+   * Another diffused status flag that controls how many
+   * cell descriptions of type Leaf in vicinity of
+   * a helper cell description of type Ancestor are
+   * augmented with Descendant cells.
+   */
+  parallelise persistent int augmentationStatus;
+  
+  /**
+   * \see communicationStatus
+   */
+  persistent int facewiseCommunicationStatus[DIMENSIONS_TIMES_TWO];
+  
+  /**
+   * Status of a helper cell description (Descendant,Ancestor)
+   * which is diffused similarly to the limiter status.
+   * 
+   * Cell description of type Leaf write the maximum value 
+   * on the boundary. Descendant and Ancestor cell descriptions
+   * will merge and diffuse the value and allocate 
+   * or deallocate memory according the converged value.
+   * 
+   * Usually, the cell descriptions which are direct
+   * neighbours to a cell description of type Leaf
+   * allocate memory and the others don't.
+   * 
+   * We write the maximum value of the facewiseCommunicationStatus flags
+   * to this field in each limiter status merging iteration.
+   */
+  parallelise persistent int communicationStatus;
+  
+  /**
+   * \see refinementStatus
+   */
+  persistent int facewiseRefinementStatus[DIMENSIONS_TIMES_TWO];
+  
+  /**
+   * Status which indicates the refinement decision made
+   * by a cell description. 
+   * -1 indicates the cell wants to be erased.
+   * -2 indicates no refinement decision was made yet.
+   * 0 means that the cell wants to be kept on the coarse grid.
+   * 2 indicates that the cell wants to be refined on the coarse grid 
+   * or kept / refined on the fine grid.
+   * This is realised with an if after the decision was made.
+   *
+   * (Can this be exploited for the regularisation?)
+   * 
+   * Unless the value is -2, the cells refinement status can be overwritten 
+   * by a neighbour's value subtracted by 1 in case the neighbour's refinement status 
+   * is larger. The value 1 then indicates the halo cells around a  
+   * fine grid cell with status 2. 
+   * The bottom-up refinement criterion ensures that all halo cells 
+   * are placed on the fine grid.
+   * No spreading is performed on coarser grids.
+   * There are no halo cells.
+   * 
+   * A troubled ADER-DG cell obtains a refinement status
+   * 2+#DG-FV layers+#FV-DG layers+1 on the fine grid.
+   * Diffusion introduces other refinement status
+   * values into which have a special meaning 
+   * for the limiting ADER-DG solver but need to be refined as well.
+   */
+  parallelise persistent int refinementStatus;
+  
+  /**
+   * The cell descriptions previous refinement status.
+   * 
+   * This field is only need for the troubled cell recomputation
+   * which must be performed after a irregular limiter domain
+   * change has occurred, i.e. cells outside of the first(!) FV
+   * helper cell layer have been marked as troubled or
+   * the halo status of a cell changed by more than the
+   * helper layer width.
+   */
+  parallelise persistent int previousRefinementStatus;
+ 
+  /**
+   * A flag indicating cells on the finest grid that have been marked by a normal refinement criterion
+   * during the time stepping. This is used as a marker for halo cell diffusion heat sources.
+   */
+  parallelise persistent bool refinementFlag;
+  
+  enum CompressionState {
+    Uncompressed,
+    CurrentlyProcessed,
+    Compressed
+  };
+  parallelise persistent packed CompressionState compressionState;
+
+  /**
+   * We use a 7 to indicate that compression does not pay off at all. Please
+   * note that the encoding follows peano::heap::findMostAgressiveCompression()
+   * which returns not the bytes actually used but the bytes spent on the 
+   * mantissa. Less than two byes is not supported by ExaHyPE actually.
+   */
+  parallelise persistent packed int bytesPerDoFInPreviousSolution      from 1 to 7;
+  parallelise persistent packed int bytesPerDoFInSolution              from 1 to 7;
+  parallelise persistent packed int bytesPerDoFInUpdate                from 1 to 7;
+  parallelise persistent packed int bytesPerDoFInExtrapolatedPredictor from 1 to 7;
+  parallelise persistent packed int bytesPerDoFInFluctuation           from 1 to 7;
+  
+  /** 
+   * Some debug information indicating how a cell
+   * description of type Leaf ended up on a MPI rank.
+   */
+  enum Creation {
+    NotSpecified,
+    UniformRefinement,
+    AdaptiveRefinement,
+    AdaptiveCoarsening,
+    ReceivedDueToForkOrJoin,
+    ReceivedFromWorker
+  };
+  persistent Creation creation;
+};

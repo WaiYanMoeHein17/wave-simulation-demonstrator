@@ -1,0 +1,145 @@
+/**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/
+{% import "subtemplates/macros.template" as m with context %}{# get template macros #}
+
+#include "{{pathToOptKernel}}/Kernels.h"
+
+#include "{{solverHeader}}"
+
+#include <algorithm>
+#include <cstring> //memset
+
+/**
+ * A simple Rusanov flux considering pointwise
+ * left and right values.
+ */
+double {{codeNamespace}}::riemannSolver(
+        {{solverName}}& solver, 
+        double* fnL, 
+        double *fnR, 
+        const double* qL, 
+        const double* qR,
+        const double* gradQL, 
+        const double* gradQR,
+        const double dx, //Assume dx[0] == dx[1] == dx[2]
+        int normalNonZero
+) {
+  {{m.allocateArray("sL", nVarPad, setToZero=True, forceStack=True) | indent(2)}}{##}
+  {{m.allocateArray("sR", nVarPad, setToZero=True, forceStack=True) | indent(2)}}{##}
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::eigenvalues(qL, normalNonZero, sL);
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::eigenvalues(qR, normalNonZero, sR);
+
+  double maxEigenvalue = -1.0;
+  for (int n = 0; n < {{nVar}}; n++) {
+    maxEigenvalue = std::max(maxEigenvalue, std::abs(sL[n]));
+  }
+  for (int n = 0; n < {{nVar}}; n++) {
+    maxEigenvalue = std::max(maxEigenvalue, std::abs(sR[n]));
+  }
+
+  double s_max = maxEigenvalue;
+  double s_max_dt = maxEigenvalue;
+
+{% if useViscousFlux %}
+  double maxViscousEigenvalue = 0.0;
+
+  // Compute penalty contribution of diffusive eigenvalues
+  std::memset(sL, 0, {{nVarPad}}*sizeof(double));
+  std::memset(sR, 0, {{nVarPad}}*sizeof(double));
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::viscousEigenvalues(qL, normalNonZero, sL);
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::viscousEigenvalues(qR, normalNonZero, sR);
+
+  for (int n = 0; n < {{nVar}}; n++) {
+    maxViscousEigenvalue = std::max(maxViscousEigenvalue, std::abs(sL[n]));
+  }
+  for (int n = 0; n < {{nVar}}; n++) {
+    maxViscousEigenvalue = std::max(maxViscousEigenvalue, std::abs(sR[n]));
+  }
+
+  constexpr double factor = 1.0 / {{sqrt_half_Pi}};
+
+  s_max += 2 * factor * maxViscousEigenvalue / dx;
+  s_max_dt += 2 * maxViscousEigenvalue / dx;
+{% endif %}
+
+
+  // determine BgradQ from ncp
+{% if useNCP or useViscousFlux %}
+    {{m.allocateArray("ncp",   nDataPad,   setToZero=True, forceStack=True) | indent(2)}}{##}
+    {{m.allocateArray("gradQ", nData*nDim, setToZero=True, forceStack=True) | indent(2)}}{##}
+    {{m.allocateArray("Qavg",  nDataPad,   setToZero=True, forceStack=True) | indent(2)}}{##}
+    #pragma omp simd aligned(Qavg,gradQ:ALIGNMENT)
+    for(int n=0; n < {{nData}}; n++) {
+       Qavg[n] = 0.5*(qR[n] + qL[n]);
+       gradQ[n+normalNonZero*{{nData}}] = qR[n] - qL[n];
+    }
+    #ifdef USE_IPO
+      #pragma forceinline recursive
+    #endif
+    solver.{{solverName}}::nonConservativeProduct(Qavg, gradQ, ncp);
+{% endif %}
+
+{% if useFlux %}
+  {{m.allocateArray("FL_tmp", nVarPad*nDim, setToZero=True, forceStack=True) | indent(2)}}{##}
+  {{m.allocateArray("FR_tmp", nVarPad*nDim, setToZero=True, forceStack=True) | indent(2)}}{##}
+  double* FL[{{nDim}}]={ FL_tmp, FL_tmp+{{nVarPad}}{{", FL_tmp+"~2*nVarPad if nDim==3}} };
+  double* FR[{{nDim}}]={ FR_tmp, FR_tmp+{{nVarPad}}{{", FR_tmp+"~2*nVarPad if nDim==3}} };
+{% if useViscousFlux %}
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::viscousFlux(qL, gradQL, FL);
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::viscousFlux(qR, gradQR, FR);
+{% else %}{# useFlux but not useViscousFlux #}
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::flux(qL, FL);
+  #ifdef USE_IPO
+    #pragma forceinline recursive
+  #endif
+  solver.{{solverName}}::flux(qR, FR);
+{% endif %}
+{% endif %}{# useFlux or useViscousFlux #}
+
+  for (int n = 0; n < {{nVar}}; n++) {
+    fnL[n] = 0.5 * s_max * (qL[n] - qR[n]);
+{% if useFlux %}
+    fnL[n] += 0.5 * (FL[normalNonZero][n] + FR[normalNonZero][n]);
+{% endif %}
+
+{% if useNCP %}
+    fnR[n] = fnL[n] - 0.5 * ncp[n];
+    fnL[n] = fnL[n] + 0.5 * ncp[n];
+{% else %}
+    fnR[n] = fnL[n];
+{% endif %}
+  }
+
+  return s_max_dt;
+}

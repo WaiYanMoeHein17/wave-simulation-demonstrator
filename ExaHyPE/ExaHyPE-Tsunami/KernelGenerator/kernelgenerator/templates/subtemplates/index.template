@@ -1,0 +1,197 @@
+{#/**
+  Index macros that can be used to abstract the computation of an index of a tensor stored as 1D array
+  
+  Example with A[L1][L2][L3][L4], A[x1][x2][x3][x4] is given by 
+  index_4(x1,x2,x3,x4,L2,L3,L4) => ((x1*L2+x2)*L3+x3)*L4+x4   (note that L1 is irrelevant)
+  
+  Will simplify 0 index values and fuse dimension if possible index_3(x1,0,x3,L2,L3) => x1*(L2*L3)+x3
+  
+  
+  The index_fixed macro assume L2, L3, ... represent the full dimension length factoring the inner dimensions.
+  
+  index_fixed_4(x1,x2,x3,x4,L2,L3,L4) => x1*L2+x2*L3+x3*L4+x4
+  
+  Will simplify 0 index values (no need to fuse dimensions)
+  
+  
+  To use without having to specify Lx everytime, define a local macro in your template
+  Assuming the macro where imported with 
+    {% import "subtemplates/index.template" as i with context %}
+  then for example
+    {% macro idxB(t,z,y,x) %}{{i.index_4(t,z,y,x,nData,nDataPad,2)}}{% endmacro %}
+  such as
+    B[{{idxB("t",0,"y","i")}}] 
+  will return (with nData = 5 and nDataPad = 8 in this example)
+    B[(t*40+y)*2+i]
+    
+  The index macros are defined recursively to correctly perform the dimension fusion
+  
+*/#}
+{#
+
+Size 2 index
+
+#}
+{% macro index_2(x1, x2, L2) %}
+{% if x1 == 0 or x1 == "0" %}
+{{x2}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1}}*{{L2}}+{{x2}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 3 index
+
+#}
+{% macro index_3(x1, x2, x3, L2, L3) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_2(x2,x3,L3)}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{index_2(x1,x3,L2*L3)}}{##}
+{% else %}
+{{index_2("("~x1~"*"~L2~"+"~x2~")",x3,L3)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 4 index
+
+#}
+{% macro index_4(x1, x2, x3, x4, L2, L3, L4) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_3(x2,x3,x4,L3,L4)}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{index_3(x1,x3,x4,L2*L3,L4)}}{##}
+{% else %}
+{{index_3("("~x1~"*"~L2~"+"~x2~")",x3,x4,L3,L4)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 5 index
+
+#}
+{% macro index_5(x1, x2, x3, x4, x5, L2, L3, L4, L5) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_4(x2,x3,x4,x5,L3,L4,L5)}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{index_4(x1,x3,x4,x5,L2*L3,L4,L5)}}{##}
+{% else %}
+{{index_4("("~x1~"*"~L2~"+"~x2~")",x3,x4,x5,L3,L4,L5)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 6 index
+
+#}
+{% macro index_6(x1, x2, x3, x4, x5, x6, L2, L3, L4, L5, L6) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_5(x2,x3,x4,x5,x6,L3,L4,L5,L6)}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{index_5(x1,x3,x4,x5,x6,L2*L3,L4,L5,L6)}}{##}
+{% else %}
+{{index_5("("~x1~"*"~L2~"+"~x2~")",x3,x4,x5,x6,L3,L4,L5,L6)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 7 index
+
+#}
+{% macro index_7(x1, x2, x3, x4, x5, x6, x7, L2, L3, L4, L5, L6, L7) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_6(x2,x3,x4,x5,x6,x7,L3,L4,L5,L6,L7)}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{index_6(x1,x3,x4,x5,x6,x7,L2*L3,L4,L5,L6,L7)}}{##}
+{% else %}
+{{index_6("("~x1~"*"~L2~"+"~x2~")",x3,x4,x5,x6,x7,L3,L4,L5,L6,L7)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 2 index fixed size
+
+#}
+{% macro index_fixed_2(x1, x2, L2) %}
+{% if x1 == 0 or x1 == "0" %}
+{{x2}}{##}
+{% elif x2 == 0 or x2 == "0" %}{# fuse dimension #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1}}*{{L2}}+{{x2}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 3 index fixed size
+
+#}
+{% macro index_fixed_3(x1, x2, x3, L2, L3) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_fixed_2(x2,x3,L3)}}{##}
+{% elif (x2 == 0 or x2 == "0") and (x3 == 0 or x3 == "0") %}{# remove trailling 0 #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1~"*"~L2~"+"~index_fixed_2(x2,x3,L3)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 4 index fixed size
+
+#}
+{% macro index_fixed_4(x1, x2, x3, x4, L2, L3, L4) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_fixed_3(x2,x3,x4,L3,L4)}}{##}
+{% elif (x2 == 0 or x2 == "0") and (x3 == 0 or x3 == "0") and (x4 == 0 or x4 == "0") %}{# remove trailling 0 #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1~"*"~L2~"+"~index_fixed_3(x2,x3,x4,L3,L4)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 5 index fixed size
+
+#}
+{% macro index_fixed_5(x1, x2, x3, x4, x5, L2, L3, L4, L5) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_fixed_4(x2,x3,x4,x5,L3,L4,L5)}}{##}
+{% elif (x2 == 0 or x2 == "0") and (x3 == 0 or x3 == "0") and (x4 == 0 or x4 == "0") and (x5 == 0 or x5 == "0") %}{# remove trailling 0 #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1~"*"~L2~"+"~index_fixed_4(x2,x3,x4,x5,L3,L4,L5)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 6 index fixed size
+
+#}
+{% macro index_fixed_6(x1, x2, x3, x4, x5, x6, L2, L3, L4, L5, L6) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_fixed_5(x2,x3,x4,x5,x6,L3,L4,L5,L6)}}{##}
+{% elif (x2 == 0 or x2 == "0") and (x3 == 0 or x3 == "0") and (x4 == 0 or x4 == "0") and (x5 == 0 or x5 == "0") and (x6 == 0 or x6 == "0") %}{# remove trailling 0 #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1~"*"~L2~"+"~index_fixed_5(x2,x3,x4,x5,x6,L3,L4,L5,L6)}}{##}
+{% endif %}
+{% endmacro %}
+{#
+
+Size 7 index fixed size
+
+#}
+{% macro index_fixed_7(x1, x2, x3, x4, x5, x6, x7, L2, L3, L4, L5, L6, L7) %}
+{% if x1 == 0 or x1 == "0" %}
+{{index_fixed_6(x2,x3,x4,x5,x6,x7,L3,L4,L5,L6,L7)}}{##}
+{% elif (x2 == 0 or x2 == "0") and (x3 == 0 or x3 == "0") and (x4 == 0 or x4 == "0") and (x5 == 0 or x5 == "0") and (x6 == 0 or x6 == "0") and (x7 == 0 or x7 == "0") %}{# remove trailling 0 #}
+{{x1}}*{{L2}}{##}
+{% else %}
+{{x1~"*"~L2~"+"~index_fixed_6(x2,x3,x4,x5,x6,x7,L3,L4,L5,L6,L7)}}{##}
+{% endif %}
+{% endmacro %}

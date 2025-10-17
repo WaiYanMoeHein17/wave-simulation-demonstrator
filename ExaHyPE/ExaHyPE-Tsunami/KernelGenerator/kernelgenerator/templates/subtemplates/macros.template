@@ -1,0 +1,137 @@
+{# /**
+  This subtemplate contain macros used in other template/subtemplate
+  
+  Include it at the start of a template to be able to use the macros
+  {% import "subtemplates/macros.template" as m with context %}
+  
+  To use macros with indentation use {{ m.XXmacr(XXargs...) | indent(XXsize) }}
+  and put a jinja comment afterward otherwise you'll get a whitespace after the 
+  macro call (known jinja2 issue, https://github.com/pallets/jinja/issues/612)
+  */
+#}
+{#
+/**
+  Allocate array
+*/
+#}
+{% macro allocateArray(name, size, precision="double", setToZero=False, pointerExists=False, forceStack=False) %}
+{% if tempVarsOnStack or forceStack %}
+{{precision}} {{name}}[{{size}}] __attribute__((aligned(ALIGNMENT))){% if setToZero %}  = {0.}{% endif %};
+{% else %}
+{% if not pointerExists %}{{precision}}* {% endif %}{{name}} = (({{precision}} *) _mm_malloc(sizeof({{precision}})*{{size}}, ALIGNMENT));
+{% if setToZero %}
+std::memset({{name}}, 0, sizeof({{precision}})*{{size}});
+{% endif %}
+{% endif %}
+{% endmacro %}{##}
+{#
+
+/**
+  Free array
+*/
+#}
+{% macro freeArray(name) %}
+{% if not tempVarsOnStack %}
+_mm_free({{name}});
+{% endif %}
+{% endmacro %}{##}
+{#
+
+/**
+  Matmul, see the subtemplate
+      C       = alpha  *   A   *    B   + beta  *  C
+   (M x N)              (M x K)  (K x N)
+  The gemm config (fetched through matmulKey) contains M, N, K, LDA, LDB, LDC, alpha and beta
+*/
+#}
+{% macro matmul_legacy(matmulKey, A, B, C, A_shift, B_shift, C_shift, trueAlpha="", trueB="", forceCoeffMatrix=False) %}
+{% include "subtemplates/matmul_legacy.template" %}
+{% endmacro %}
+{% macro matmul(matmulKey, A, B, C, A_shift, B_shift, C_shift) %}
+{% include "subtemplates/matmul.template" %}
+{% endmacro %}
+{% macro matmul_prefetch(matmulKey, A, B, C, A_shift, B_shift, C_shift, A_next, B_next, C_next) %}
+{% include "subtemplates/matmul.template" %}
+{% endmacro %}
+{#
+
+/**
+  Matmul include
+*/
+#}
+{% macro matmulInclude() %}
+{% if prefetchInputs or prefetchOutputs%}
+// intrisics for prefetching
+#include <xmmintrin.h>
+{% endif %}
+{% if useEigen %}
+// include Eigen for matmul
+#include <{{pathToOptKernel}}/Eigen/Dense>
+{% endif %}
+{% if useLibxsmm %}
+// include libxsmms' gemms for matmul
+#include "{{pathToOptKernel}}/gemmsCPP.h"
+{% endif %}
+{% endmacro %}
+{#
+
+/**
+  Setup matmul
+*/
+#}
+{% macro setupMatmul(matmulKey) %}
+{% if matmulKey in matmulConfigs %}
+{% with %}
+{% set conf = matmulConfigs[matmulKey] %}
+{% if conf.precision == "DP" %}
+{% set fpFormat = "double" %}
+{% else %}
+{% set fpFormat = "float" %}
+{% endif %}
+{#
+// Eigen case
+#}
+{% if useEigen %}
+// setup Map for {{conf.baseroutinename}}
+Eigen::Map<Eigen::Matrix<{{"double" if conf.precision == "DP" else "float"}},{{conf.M}},{{conf.K}}>, Eigen::{{"Aligned"if conf.alignment_A == 1 else "Unaligned"}}, Eigen::OuterStride<{{conf.LDA}}> > {{conf.baseroutinename}}_A_map(nullptr);
+Eigen::Map<Eigen::Matrix<{{"double" if conf.precision == "DP" else "float"}},{{conf.K}},{{conf.N}}>, Eigen::Aligned, Eigen::OuterStride<{{conf.LDB}}> > {{conf.baseroutinename}}_B_map(nullptr); // assume B is aligned
+Eigen::Map<Eigen::Matrix<{{"double" if conf.precision == "DP" else "float"}},{{conf.M}},{{conf.N}}>, Eigen::{{"Aligned"if conf.alignment_C == 1 else "Unaligned"}}, Eigen::OuterStride<{{conf.LDC}}> > {{conf.baseroutinename}}_C_map(nullptr);
+{% endif %}
+{% endwith %}
+{% endif %}{# matmulKey in matmulConfigs #}
+{% endmacro %}
+{#
+
+/**
+  Allocate stack tmp arrays for vect PDE.
+  Subarray will be allocated too
+  Array = name of the array
+  blockedDim = if there are multiple dim (for example F for flux splitted into x, y, and z)
+*/
+#}
+{% macro vectPDEsArrays(array, size, blockedDim) %}
+{% include "subtemplates/vectPDEsArrays.template" %}
+{% endmacro %}
+{#
+
+/**
+  output the right slope_limiter function to inline
+*/
+#}
+{% macro printSlopeLimiterFunction() %}
+{% include "subtemplates/slopeLimiter.template" %}
+{% endmacro %}
+{#
+
+/**
+  copy for gradQ
+*/
+#}
+{% macro gradQAdapter(gradQ,gradQX,gradQY,gradQZ,incr) %}
+double {{gradQ}}[{{incr*nDim}}];
+std::copy_n({{gradQX}}, {{incr}}, {{gradQ}}); //x
+std::copy_n({{gradQY}}, {{incr}}, {{gradQ}}+{{1*incr}}); //y
+{% if nDim==3 %}
+std::copy_n({{gradQZ}}, {{incr}}, {{gradQ}}+{{2*incr}}); //z
+{% endif %}
+{% endmacro %}

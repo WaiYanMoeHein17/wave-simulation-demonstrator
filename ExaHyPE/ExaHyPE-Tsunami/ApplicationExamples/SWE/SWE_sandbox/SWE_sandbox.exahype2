@@ -1,0 +1,116 @@
+{
+   "project_name": "SWE",
+   "paths": {
+	"peano_kernel_path": "Peano",
+	"exahype_path": "ExaHyPE",
+	"output_directory": "ApplicationExamples/SWE/SWE_sandbox",
+	"log_file": "mylogfile.log"
+  },
+  "architecture": "noarch",
+  "computational_domain": {
+    "dimension": 2,
+    "end_time": 1000.0,
+    "offset": [
+      0.0,
+      0.0
+    ],
+    "width": [
+      799.0,
+      599.0
+    ]
+  },
+  "shared_memory": {
+    "cores": 20,
+    "properties_file": "sharedmemory.properties",
+    "autotuning_strategy": "dummy",
+    "background_job_consumers": 11
+  },
+  "distributed_memory": {
+    "timeout": 10000,
+    "load_balancing_type": "static",
+    "buffer_size": 160000,
+    "load_balancing_strategy": "hotspot",
+    "node_pool_strategy": "fair",
+    "ranks_per_node": 1
+  },
+  "optimisation": {
+    "fuse_algorithmic_steps": "none",
+    "fuse_algorithmic_steps_rerun_factor": 0.99,
+    "fuse_algorithmic_steps_diffusion_factor": 0.99,
+    "spawn_predictor_as_background_thread": false,
+    "spawn_amr_background_threads": false,
+    "disable_vertex_exchange_in_time_steps": true,
+    "time_step_batch_factor": 0.0,
+    "disable_metadata_exchange_in_batched_time_steps": true,
+    "double_compression": 0.0,
+    "spawn_double_compression_as_background_thread": false
+  },
+  "solvers": [
+  {
+	  "type": "Limiting-ADER-DG",
+	  "name": "MySWESolver",
+	  "order": 8,
+	  "maximum_mesh_size": 120,
+	  "maximum_mesh_depth": 0,
+	  "time_stepping": "globalfixed",
+	  "aderdg_kernel": {
+		  "language": "C",
+		  "nonlinear": true,
+		  "terms": [
+              "flux",
+              "ncp"
+			  ],
+		  "space_time_predictor": {},
+		  "optimised_terms": [],
+		  "optimised_kernel_debugging": [],
+		  "implementation": "generic",
+		  "allocate_temporary_arrays": "stack"
+	  },
+	  "point_sources": 0,
+	  "limiter": {
+		  "dmp_observables": 4,
+		  "dmp_relaxation_parameter": 10000.0,
+		  "dmp_difference_scaling": 10000.0,
+		  "implementation": "generic"
+	  },
+
+	  "fv_kernel": {
+		  "language": "C",
+		  "terms": [
+			  "flux"
+			  ],
+		  "scheme": "godunov",
+		  "implementation": "generic",
+		  "allocate_temporary_arrays": "stack"
+	  },
+	  "variables": [
+	  {
+		  "name": "h",
+		  "multiplicity": 1
+	  },
+	  {
+		  "name": "hu",
+		  "multiplicity": 1
+	  },
+	  {
+		  "name": "hv",
+		  "multiplicity": 1
+	  },
+	  {
+		  "name": "b",
+		  "multiplicity": 1
+	  }
+	  ],
+	  "plotters": [
+          {
+              "type": "vtk::Cartesian::cells::limited::ascii",
+              "name": "ConservedWriter",
+              "time": 0.0,
+              "repeat": 10.0,
+              "output": "./output/vtk-sandbox",
+              "variables": 5
+          }
+	  ]
+  } 
+ ]
+}

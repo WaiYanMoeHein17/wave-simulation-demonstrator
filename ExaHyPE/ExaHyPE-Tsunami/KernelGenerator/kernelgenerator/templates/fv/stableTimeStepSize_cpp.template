@@ -1,0 +1,113 @@
+/**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/
+{% import 'subtemplates/macros.template' as m with context %}{# get template macros #}
+
+#include "{{pathToOptKernel}}/Kernels.h"
+
+#include "{{solverHeader}}"
+
+#include <algorithm> // transform, fill_n
+
+double {{codeNamespace}}::stableTimeStepSize(
+  {{solverName}}& solver,
+  const double* const luh,
+  const double dx //Assume dx[0] == dx[1] == dx[2]
+) {
+
+  constexpr double cflFactor       = {{solverName}}::CFL / {{nDim*nDof}}; // CFL / (nDim * patchsize)
+
+  //kernels::idx4 idx(patchSize+2*ghostLayerWidth, patchSize+2*ghostLayerWidth, patchSize+2*ghostLayerWidth,numberOfData);
+
+  {{m.allocateArray("lambda", nVar, forceStack=True) | indent(2)}}{##}
+  double dt_max_stable = std::numeric_limits<double>::max();
+  double maxEigenvalue;
+{% if useViscousFlux %}
+  double maxEigenvalue_vis;
+{% endif %}
+  
+
+  for (int z = {{ghostLayerWidth3D}}; z < {{ghostLayerWidth3D+nDof3D}}; z++) {
+    for (int y = {{ghostLayerWidth}}; y < {{ghostLayerWidth+nDof}}; y++) {
+      for (int x = {{ghostLayerWidth}}; x < {{ghostLayerWidth+nDof}}; x++) {
+        const int xyz = ((z*{{nDofG}}+y)*{{nDofG}}+x)*{{nData}};
+        // x
+#ifdef USE_IPO
+        #pragma forceinline recursive
+#endif
+        solver.{{solverName}}::eigenvalues(luh + xyz, 0/*x-axis*/, lambda);
+        std::transform(lambda, lambda + {{nVar}}, lambda, std::abs<double>);
+        maxEigenvalue = *std::max_element(lambda, lambda + {{nVar}});
+
+{% if useViscousFlux %}
+#ifdef USE_IPO
+        #pragma forceinline recursive
+#endif
+        solver.{{solverName}}::viscousEigenvalues(luh + xyz, 0/*x-axis*/, lambda);
+        std::transform(lambda, lambda + {{nVar}}, lambda,
+                std::abs<double>);
+        maxEigenvalue_vis = *std::max_element(lambda, lambda + {{nVar}});
+        maxEigenvalue += 2.0*{{nDof}}/dx * maxEigenvalue_vis;
+{% endif %}
+
+        dt_max_stable = std::min(dt_max_stable, cflFactor * dx / maxEigenvalue);
+
+        // y
+#ifdef USE_IPO
+        #pragma forceinline recursive
+#endif
+        solver.{{solverName}}::eigenvalues(luh + xyz, 1/*y-axis*/, lambda);
+        std::transform(lambda, lambda + {{nVar}}, lambda,
+            std::abs<double>);
+        maxEigenvalue = *std::max_element(lambda, lambda + {{nVar}});
+
+{% if useViscousFlux %}
+#ifdef USE_IPO
+        #pragma forceinline recursive
+#endif
+        solver.{{solverName}}::viscousEigenvalues(luh + xyz, 1/*y-axis*/, lambda);
+        std::transform(lambda, lambda + {{nVar}}, lambda,
+                std::abs<double>);
+        maxEigenvalue_vis = *std::max_element(lambda, lambda + {{nVar}});
+        maxEigenvalue += 2.0*{{nDof}}/dx * maxEigenvalue_vis;
+{% endif %}
+
+        dt_max_stable = std::min(dt_max_stable, cflFactor * dx / maxEigenvalue);
+
+{% if nDim == 3%}
+        // z
+#ifdef USE_IPO
+        #pragma forceinline recursive
+#endif
+        solver.{{solverName}}::eigenvalues(luh + xyz, 2/*z-axis*/, lambda);
+        std::transform(lambda, lambda + {{nVar}}, lambda,
+            std::abs<double>);
+        maxEigenvalue = *std::max_element(lambda, lambda + {{nVar}});
+{% if useViscousFlux %}
+#ifdef USE_IPO
+        #pragma forceinline recursive
+#endif
+        solver.{{solverName}}::viscousEigenvalues(luh + xyz, 2/*z-axis*/, lambda);
+        std::transform(lambda, lambda + {{nVar}}, lambda,
+                std::abs<double>);
+        maxEigenvalue_vis = *std::max_element(lambda, lambda + {{nVar}});
+        maxEigenvalue += 2.0*{{nDof}}/dx * maxEigenvalue_vis;
+{% endif %}
+
+        dt_max_stable = std::min(dt_max_stable, cflFactor * dx / maxEigenvalue);
+{% endif %}{# nDim == 3#}
+
+      }
+    }
+  }
+  return dt_max_stable;
+}
