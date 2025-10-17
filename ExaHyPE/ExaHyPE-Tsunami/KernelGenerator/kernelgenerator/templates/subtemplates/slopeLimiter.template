@@ -1,0 +1,75 @@
+{# /**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/ #}
+{#
+  give the right slope_limiter function amongts ["minmod","koren","superbee","vanalbada","mclim"]
+#}
+{% if slopeLimiter == "minmod" %}
+// minmod
+inline double slope_limiter(const double a, const double b) {
+  if (a * b < 0.0) {  // sign is different (alternative: std::signbit and xor)
+    return 0.0;
+  } else {
+    if (std::fabs(a) < std::fabs(b)) {
+      return a;
+    } else {
+      return b;
+    }
+  }
+}
+{% elif slopeLimiter == "koren" %}
+// koren
+inline double slope_limiter(const double a, const double b) {
+  if(std::fabs(b) < 1.e-12) { 
+    return 0.0;
+  } else {
+    double r=a/b;
+    double phi=std::max(0.0, std::min(2.0*r , std::min((1.+2.*r)/3.,2.0)));
+    return phi*b;
+  }
+}
+{% elif slopeLimiter == "superbee" %}
+// superbee
+inline double slope_limiter(const double a, const double b) {
+  if(std::fabs(b) < 1.e-12) { 
+    return 0.0;
+  } else {
+    double r=a/b;
+    double phi=std::max(0.0, std::max(std::min(2.0*r ,1.), std::min(r,2.0)));
+    return phi*b;
+  }
+}
+{% elif slopeLimiter == "vanalbada" %}
+// vanalbada
+inline double slope_limiter(const double a, const double b) {
+  if(std::fabs(b) < 1.e-12) { 
+    return 0.0;
+  } else {
+    double r=a/b;
+    double phi=(r*r+r)/(r*r+1.);
+    return phi*b;
+  }
+}
+{% elif slopeLimiter == "mclim" %}
+// mclim
+inline double slope_limiter(const double a, const double b) {
+  if(std::fabs(b) < 1.e-12) { 
+    return 0.0;
+  } else {
+    double r=a/b;
+    double temp=std::min(2.0*r ,0.5*(1+r));
+
+    double phi=std::max( 0.0, std::min(temp,2.0));
+    return phi*b;
+  }
+}
+{% endif %}

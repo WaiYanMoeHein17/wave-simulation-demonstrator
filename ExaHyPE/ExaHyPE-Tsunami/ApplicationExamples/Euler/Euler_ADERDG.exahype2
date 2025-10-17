@@ -1,0 +1,96 @@
+{
+  "project_name": "Euler",
+  "paths": {
+    "peano_kernel_path": "./Peano",
+    "exahype_path": "./ExaHyPE",
+    "output_directory": "./ApplicationExamples/Euler"
+  },
+  "architecture": "noarch",
+  "computational_domain": {
+    "dimension": 2,
+    "time_steps": 100,
+    "offset": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "width": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "shared_memory": {
+    "cores": 1,
+    "properties_file": "sharedmemory.properties",
+    "autotuning_strategy": "dummy"
+  },
+  "distributed_memory": {
+    "timeout": 60,
+    "load_balancing_type": "static",
+    "buffer_size": 64,
+    "load_balancing_strategy": "hotspot",
+    "node_pool_strategy": "fair",
+    "ranks_per_node": 1
+  },
+  "optimisation": {
+    "fuse_algorithmic_steps": "none",
+    "fuse_algorithmic_steps_rerun_factor": 0.99,
+    "fuse_algorithmic_steps_diffusion_factor": 0.99,
+    "spawn_predictor_as_background_thread": false,
+    "spawn_amr_background_threads": false,
+    "disable_vertex_exchange_in_time_steps": true,
+    "time_step_batch_factor": 0.5,
+    "disable_metadata_exchange_in_batched_time_steps": true,
+    "double_compression": 0.0,
+    "spawn_double_compression_as_background_thread": false
+  },
+  "solvers": [
+    {
+      "type": "ADER-DG",
+      "name": "EulerSolver_ADERDG",
+      "order": 3,
+      "maximum_mesh_size": 0.05,
+      "time_stepping": "globalfixed",
+      "aderdg_kernel": {
+        "language": "C",
+        "nonlinear": true,
+        "terms": [
+          "flux"
+        ],
+        "space_time_predictor": {},
+        "optimised_terms": [],
+        "optimised_kernel_debugging": [],
+        "implementation": "generic"
+      },
+      "point_sources": 0,
+      "variables": [
+        {
+          "name": "rho",
+          "multiplicity": 1
+        },
+        {
+          "name": "j",
+          "multiplicity": 3
+        },
+        {
+          "name": "E",
+          "multiplicity": 1
+        }
+      ],
+      "parameters": {
+        "reference": "entropywave"
+      },
+      "plotters": [
+        {
+          "type": "vtk::Cartesian::vertices::ascii",
+          "name": "ErrorPlotter",
+          "time": 0.0,
+          "repeat": 0.01,
+          "output": "./errors",
+          "variables": 15
+        }
+      ]
+    }
+  ]
+}

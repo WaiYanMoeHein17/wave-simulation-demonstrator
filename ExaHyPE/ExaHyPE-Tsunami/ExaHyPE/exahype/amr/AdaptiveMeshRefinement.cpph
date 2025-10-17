@@ -1,0 +1,58 @@
+template <class CellDescription,class CellDescriptionHeap>
+exahype::solvers::Solver::SubcellPosition
+exahype::amr::computeSubcellPositionOfVirtualCell(const CellDescription& pChild) {
+  assertion1(pChild.getType()==CellDescription::Type::Virtual,pChild.toString());
+
+  // 1. Initialisation.
+  exahype::solvers::Solver::SubcellPosition subcellPosition;
+  subcellPosition.parentCellDescriptionsIndex = pChild.getParentIndex();
+  subcellPosition.parentElement=exahype::solvers::Solver::NotFound;
+  CellDescription* pParent = nullptr;
+  
+  if ( CellDescriptionHeap::getInstance().isValidIndex(pChild.getParentIndex()) ) {
+    int parentElement=0;
+    for (auto& p : CellDescriptionHeap::getInstance().getData(
+        pChild.getParentIndex())) {
+      if (p.getSolverNumber()==pChild.getSolverNumber()) {
+        subcellPosition.parentElement = parentElement;
+        pParent = &p;
+        break;
+      }
+      ++parentElement;
+    }
+    if ( pParent!=nullptr ) {
+      // 2. If the current parent is a Virtual try to determine iteratively the next Cell
+      // or the top most Virtual.
+      while ( pParent->getType()==CellDescription::Type::Virtual ) {
+        const int currentParentIndex =
+            pParent->getParentIndex();
+        assertion1(CellDescriptionHeap::getInstance().isValidIndex(
+            currentParentIndex),currentParentIndex); // Must always hold if the current parent is an (Empty)Virtual
+        int parentElement=0;
+        for (auto& p : CellDescriptionHeap::getInstance().getData(currentParentIndex)) {
+          if (p.getSolverNumber()==pChild.getSolverNumber()) {
+            subcellPosition.parentCellDescriptionsIndex = pParent->getParentIndex();
+            subcellPosition.parentElement               = parentElement;
+            pParent = &p;
+            break;
+          }
+          ++parentElement;
+        }
+      }
+      assertion(pParent->getType() == CellDescription::Virtual ||
+                pParent->getType()==CellDescription::Type::Leaf ||
+                pParent->getType()==CellDescription::Type::LeafChecked ||
+                pParent->getType()==CellDescription::Type::LeafInitiatesRefining ||
+                pParent->getType()==CellDescription::Type::LeafRefines ||
+                pParent->getType()==CellDescription::Type::LeafProlongates);
+    
+      subcellPosition.subcellIndex =
+          computeSubcellIndex(
+              pChild.getOffset(),pChild.getSize(),
+              pParent->getOffset());
+      subcellPosition.levelDifference =
+          pChild.getLevel() - pParent->getLevel();
+    }
+  }
+  return subcellPosition;
+}

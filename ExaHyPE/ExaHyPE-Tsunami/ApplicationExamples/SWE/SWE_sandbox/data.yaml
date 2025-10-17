@@ -1,0 +1,36 @@
+!AffineMap
+matrix:
+ x: [1.0, 0.0, 0.0]
+ y: [0.0, 1.0, 0.0]
+translation:
+ x: 0.0
+ y: 0.0
+components:
+  !Switch
+  [b]: 
+    !ASAGI
+    file: sandbox_input/output.nc
+    interpolation: linear
+    parameters: [b]
+    var: elevation
+    components:
+      !AffineMap
+      matrix:
+        b: [0.01]
+      translation:
+        b: 0.0
+  [w]: 
+    !ASAGI
+    file: sandbox_input/water.nc
+    interpolation: linear
+    parameters: [w]
+    var: elevation
+    components:
+      !AffineMap
+      matrix:
+        w: [0.01]
+      translation:
+        w: 0.0
+
+
+

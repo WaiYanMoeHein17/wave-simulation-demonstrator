@@ -1,0 +1,84 @@
+/**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/
+{% import "subtemplates/index.template" as i with context %}
+{% macro idxLuh(z,y,x,n) %}{{i.index_4(z,y,x,n,nDofG,nDofG,nData)}}{% endmacro %}
+{% macro idxBndX(z,y,x,n) %}{{i.index_4(z,y,x,n,nDof,ghostLayerWidth,nData)}}{% endmacro %}
+{% macro idxBndY(z,y,x,n) %}{{i.index_4(z,y,x,n,ghostLayerWidth,nDof,nData)}}{% endmacro %}
+{% macro idxBndZ(z,y,x,n) %}{{i.index_4(z,y,x,n,nDof,nDof,nData)}}{% endmacro %}
+{% set y,z="y","z" %}{# shortcut for the idx #}
+
+
+#include "{{pathToOptKernel}}/Kernels.h"
+
+#include "{{solverHeader}}"
+
+#include <algorithm>
+
+void {{codeNamespace}}::boundaryLayerExtraction(
+    double* luhbnd,const double* luh,
+    const int* const boundaryPosition
+) {
+
+  // Always do the whole x dim in one copy
+
+  // x-axis: strides: Mz>My
+  if (boundaryPosition[0] == -1) {  // |G0|G1|U0|U1|...
+    for (int z = {{ghostLayerWidth3D}}; z < {{ghostLayerWidth3D+nDof3D}}; z++) {
+      for (int y = {{ghostLayerWidth}}; y < {{ghostLayerWidth+nDof}}; y++) {
+        std::copy_n(luh+{{idxLuh(z,y,ghostLayerWidth,0)}}, {{ghostLayerWidth*nData}}, luhbnd+{{idxBndX("z-"~ghostLayerWidth3D,"y-"~ghostLayerWidth,0,0)}});
+      }
+    }
+  }
+  if (boundaryPosition[0] == +1) { // UN-1|UN||G0|G1|
+    for (int z = {{ghostLayerWidth3D}}; z < {{ghostLayerWidth3D+nDof3D}}; z++) {
+      for (int y = {{ghostLayerWidth}}; y < {{ghostLayerWidth+nDof}}; y++) {
+        std::copy_n(luh+{{idxLuh(z,y,nDof,0)}}, {{ghostLayerWidth*nData}}, luhbnd+{{idxBndX("z-"~ghostLayerWidth3D,"y-"~ghostLayerWidth,0,0)}});
+      }
+    }
+  }
+
+  // y-axis: strides: Mz>Mx
+  if (boundaryPosition[1] == -1) {
+    for (int z = {{ghostLayerWidth3D}}; z < {{ghostLayerWidth3D+nDof3D}}; z++) {
+      for (int y = 0; y < {{ghostLayerWidth}}; y++) {
+        std::copy_n(luh+{{idxLuh(z,"y+"~ghostLayerWidth,ghostLayerWidth,0)}}, {{nData*nDof}}, luhbnd+{{idxBndY("z-"~ghostLayerWidth3D,y,0,0)}});
+      }
+    }
+    
+  }
+  if (boundaryPosition[1] == +1) {
+    for (int z = {{ghostLayerWidth3D}}; z < {{ghostLayerWidth3D+nDof3D}}; z++) {
+      for (int y = 0; y < {{ghostLayerWidth}}; y++) {
+        std::copy_n(luh+{{idxLuh(z,"y+"~nDof,ghostLayerWidth,0)}}, {{nData*nDof}}, luhbnd+{{idxBndY("z-"~ghostLayerWidth3D,y,0,0)}});
+      }
+    }
+  }
+{% if nDim == 3%}
+
+  // z-axis: strides: My>Mx
+  if (boundaryPosition[2] == -1) {
+    for (int z=0; z<{{ghostLayerWidth}}; z++) {
+      for (int y={{ghostLayerWidth}}; y<{{ghostLayerWidth+nDof}}; ++y) {
+        std::copy_n(luh+{{idxLuh("z+"~ghostLayerWidth,y,ghostLayerWidth,0)}}, {{nData*nDof}}, luhbnd+{{idxBndZ(z,"y-"~ghostLayerWidth,0,0)}});
+      }
+    }
+  }
+  if (boundaryPosition[2] == +1) {
+    for (int z=0; z<{{ghostLayerWidth}}; z++) {
+      for (int y={{ghostLayerWidth}}; y<{{ghostLayerWidth+nDof}}; ++y) {
+        std::copy_n(luh+{{idxLuh("z+"~nDof,y,ghostLayerWidth,0)}}, {{nData*nDof}}, luhbnd+{{idxBndZ(z,"y-"~ghostLayerWidth,0,0)}});
+      }
+    }
+  }
+{% endif %}
+}

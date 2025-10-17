@@ -1,0 +1,88 @@
+{# /**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/ #}
+
+#ifndef _EXAHYPE_{{guardNamespace}}_KERNELS_H_
+#define _EXAHYPE_{{guardNamespace}}_KERNELS_H_
+
+#if !defined(__INTEL_COMPILER) && !defined(__aarch64__)
+#include <mm_malloc.h>
+#endif
+#include <vector>
+
+//forward declaration of the user solver
+namespace {{solverNamespace}} {
+  class {{solverClass}};
+}
+
+//forward declaration of the ADERDGSolver for limiter functions
+namespace exahype {
+namespace solvers {
+ class ADERDGSolver;
+}
+}
+
+
+//Limiter
+//-------
+
+{% for namespaceName in codeNamespaceList %}
+namespace {{namespaceName}} {
+{% endfor %}
+  void projectOnFVLimiterSpace(const double* const luh, double* const lim);
+
+  void projectOnDGSpace(const double* const lim, double* const luh);
+
+  void findCellLocalMinAndMax(
+    const double* const luh,
+    const exahype::solvers::ADERDGSolver* solver,
+    double* const localMinPerVariables, 
+    double* const localMaxPerVariable
+  );
+
+  void findCellLocalLimiterMinAndMax(
+    const double* const lim,
+    const exahype::solvers::ADERDGSolver* solver,
+    double* const localMinPerObservable, 
+    double* const localMaxPerObservable
+  );
+
+  bool discreteMaximumPrincipleAndMinAndMaxSearch(
+    const double* const luh,
+    const exahype::solvers::ADERDGSolver* solver,
+    const double relaxationParameter,
+    const double differenceScaling,
+    double* boundaryMinPerVariables, 
+    double* boundaryMaxPerVariables
+  );
+
+  //private
+  void compareWithADERDGSolutionAtGaussLobattoNodes(
+    const double* const luh,
+    const exahype::solvers::ADERDGSolver* solver,
+    double* min, 
+    double* max
+  );
+
+  //private
+  void compareWithADERDGSolutionAtFVSubcellCenters(
+    const double* const luh,
+    const exahype::solvers::ADERDGSolver* solver,
+    double* min, 
+    double* max
+  );
+  
+{% for namespaceName in codeNamespaceList %}
+}
+{% endfor %}
+
+#endif // _EXAHYPE_{{guardNamespace}}_KERNELS_H_

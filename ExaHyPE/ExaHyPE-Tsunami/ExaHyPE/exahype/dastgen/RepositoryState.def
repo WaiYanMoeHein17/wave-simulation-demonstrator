@@ -1,0 +1,8 @@
+// This file is part of the Peano project. For conditions of distribution and
+// use, please see the copyright notice at www.peano-framework.org
+class exahype::records::RepositoryState { 
+  enum Action { WriteCheckpoint, ReadCheckpoint, Terminate, RunOnAllNodes,UseAdapterUniformRefinement,UseAdapterMeshRefinement,UseAdapterMeshRefinementAndPlotTree,UseAdapterFinaliseMeshRefinement,UseAdapterFinaliseMeshRefinementOrLocalRollback,UseAdapterInitialPrediction,UseAdapterFusedTimeStep,UseAdapterPredictionRerun,UseAdapterBroadcast,UseAdapterBroadcastAndDropNeighbourMessages,UseAdapterRefinementStatusSpreading,UseAdapterPredictionOrLocalRecomputation,UseAdapterMergeNeighbours,UseAdapterUpdateAndReduce,UseAdapterPrediction,UseAdapterCorrection,UseAdapterEmpty,NumberOfAdapters};
+  persistent parallelise Action action;
+  persistent parallelise int    numberOfIterations;
+  persistent parallelise bool   exchangeBoundaryVertices;
+};

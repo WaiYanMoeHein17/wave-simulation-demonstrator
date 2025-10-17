@@ -1,0 +1,562 @@
+/**
+ * This file is part of the ExaHyPE project.
+ * Copyright (c) 2016  http://exahype.eu
+ * All rights reserved.
+ *
+ * The project has received funding from the European Union's Horizon
+ * 2020 research and innovation programme under grant agreement
+ * No 671698. For copyrights and licensing, please consult the webpage.
+ *
+ * Released under the BSD 3 Open Source License.
+ * For the full license text, see LICENSE.txt
+ **/
+{% import "subtemplates/macros.template" as m with context %}{# get template macros #}
+
+#include "{{pathToOptKernel}}/Kernels.h"
+
+#include "{{solverHeader}}"
+
+#include <algorithm>
+#include <cstring> //memset
+#include <cmath> // for slope_limiter
+
+{{m.printSlopeLimiterFunction()}}{# define the slope_limiter(a,b) function #}
+
+double {{codeNamespace}}::solutionUpdate(
+    {{solverName}}& solver,
+    double* luh,
+    const double* const cellCenter,
+    const double dx,
+    const double t,
+    double dt
+) {
+  // ghostLayerWidth == 2 is assumed
+
+  constexpr double cflFactor       = CFL; // This is not SolverType::CFL; see header.
+
+
+  const double cellSize           = dx*{{1.0/nDof}}; // dx/patchsize
+  const double cellSizeArray[3]    = {cellSize, cellSize, cellSize}; // for RiemannSolver
+  const double invCellSize        = 1./cellSize;
+  const double invCellSizeTimesDt = invCellSize*dt;
+
+  double x0[{{nDim}}]; // Location of volume.
+
+  // 0. Copy old solution into temporary variable
+  //padded luh without the outermost ghostlayer
+  {{m.allocateArray("luhShort", nDofGS3D*nDofGS*nDofGS*nDataPad) | indent(2)}}{##}
+  for(int z = 0; z < {{nDofGS3D}}; z++) {
+    for(int y = 0; y < {{nDofGS}}; y++) {
+      for(int x = 0; x < {{nDofGS}}; x++) {
+        std::copy_n(luh+(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}, {{nData}}, luhShort+((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}});
+      }
+    }
+  }
+
+  // 1. Gather data from neighbouring cells; already done.
+
+  // 2. Compute slopes TODO(Dominic): Make sure to only consider parameters in luh
+  {{m.allocateArray("slopeX", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+  {{m.allocateArray("slopeY", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+{% if nDim == 3 %}
+  {{m.allocateArray("slopeZ", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+{% endif %}
+
+  // This musclhancock does not yet use 2. ghostlayer.
+  // slopeX
+  for(int z = 0; z < {{nDofGS3D}}; z++) {
+    for(int y = 0; y < {{nDofGS}}; y++) {
+      for(int x = 0; x < {{nDofGS}}; x++) {
+        for(int n = 0; n < {{nData}}; n++) {
+        slopeX[((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}}+n] =
+              slope_limiter(
+                luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+2)*{{nData}}+n] - luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n],
+                luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] - luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x)*{{nData}}+n]
+              ) * invCellSize;
+        }
+      }
+    }
+  }
+  // slopey
+  for(int z = 0; z < {{nDofGS3D}}; z++) {
+    for(int y = 0; y < {{nDofGS}}; y++) {
+      for(int x = 0; x < {{nDofGS}}; x++) {
+        for(int n = 0; n < {{nData}}; n++) {
+        slopeY[((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}}+n] =
+              slope_limiter(
+                luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+2)*{{nDofG}}+x+1)*{{nData}}+n] - luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n],
+                luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] - luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y)*{{nDofG}}+x+1)*{{nData}}+n]
+              ) * invCellSize;
+        }
+      }
+    }
+  }
+{% if nDim == 3 %}
+  // slopez
+  for(int z = 0; z < {{nDofGS3D}}; z++) {
+    for(int y = 0; y < {{nDofGS}}; y++) {
+      for(int x = 0; x < {{nDofGS}}; x++) {
+        for(int n = 0; n < {{nData}}; n++) {
+        slopeZ[((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}}+n] =
+              slope_limiter(
+                luh[(((z+2)*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] - luh[(((z+1)*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n],
+                luh[(((z+1)*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] - luh[(((z)*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n]
+              ) * invCellSize;
+        }
+      }
+    }
+  }
+{% endif %}
+  
+{% if useRobustDiagLim %}
+  //TODO JMG simplify
+
+    // Zero the first ghost layer cell slopes where one neighbour datum is missing
+    //
+    // Derivation: Go to the begin or end of a patch in x-direction: x \in \{patchBegin,patchEnd-1\}.
+    // In y-direction, go before the begin or after the end of the patch: y \in \{patchBegin-1,patchEnd\}.
+    // The respective solution datum is given from a face neighbour. However, a datum in x-direction right
+    // beside its position was not obtained from a diagonal neighbour.
+    // At the boundary between face neighbour and diagonal neighbour, the x-slope cannot
+    // be computed. Slope limiting is not possible. The slope is set to zero.
+{% if nDim == 3 %}
+  for( int i = 0; i < {{nDofGS}}; i++) {
+    // z-slope<-0 (z       y       x          slope var)                              
+    std::fill_n(slopeZ+(({{ghostLayerWidth-1}}*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeZ+(({{ghostLayerWidth-1}}*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeZ+(({{nDof+ghostLayerWidth-2}}*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeZ+(({{nDof+ghostLayerWidth-2}}*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+
+    std::fill_n(slopeZ+(({{ghostLayerWidth-1}}*{{nDofGS}}+i)*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeZ+(({{ghostLayerWidth-1}}*{{nDofGS}}+i)*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeZ+(({{nDof+ghostLayerWidth-2}}*{{nDofGS}}+i)*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeZ+(({{nDof+ghostLayerWidth-2}}*{{nDofGS}}+i)*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  }
+  for( int i = 0; i < {{nDofGS}}; i++) {
+    // y-slope<-0  (z       y       x slope var)
+    std::fill_n(slopeY+(({{ghostLayerWidth-2}}*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeY+(({{nDof+ghostLayerWidth-1}}*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeY+(({{ghostLayerWidth-2}}*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeY+(({{nDof+ghostLayerWidth-1}}*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDofGS}}+i)*{{nDataPad}}, {{nDataPad}} ,0.0);
+
+    std::fill_n(slopeY+((i*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeY+((i*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeY+((i*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeY+((i*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  }
+  for( int i = 0; i < {{nDofGS}}; i++) {
+    // x-slope<-0 (z       y       x slope var)   
+    std::fill_n(slopeX+((i*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeX+((i*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeX+((i*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeX+((i*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+
+    std::fill_n(slopeX+(({{ghostLayerWidth-2}}*{{nDofGS}}+i)*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeX+(({{nDof+ghostLayerWidth-1}}*{{nDofGS}}+i)*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeX+(({{ghostLayerWidth-2}}*{{nDofGS}}+i)*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+    std::fill_n(slopeX+(({{nDof+ghostLayerWidth-1}}*{{nDofGS}}+i)*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  }
+{% else %}{# 2D case #}
+  // y-slope<-0  (   y            x      slope var)
+  std::fill_n(slopeY+({{ghostLayerWidth-1}}*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  std::fill_n(slopeY+({{ghostLayerWidth-1}}*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  std::fill_n(slopeY+({{nDof+ghostLayerWidth-2}}*{{nDofGS}}+{{ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  std::fill_n(slopeY+({{nDof+ghostLayerWidth-2}}*{{nDofGS}}+{{nDof+ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  // x-slope<-0  (   y            x      slope var)
+  std::fill_n(slopeX+({{ghostLayerWidth-2}}*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  std::fill_n(slopeX+({{nDof+ghostLayerWidth-1}}*{{nDofGS}}+{{ghostLayerWidth-1}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  std::fill_n(slopeX+({{ghostLayerWidth-2}}*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+  std::fill_n(slopeX+({{nDof+ghostLayerWidth-1}}*{{nDofGS}}+{{nDof+ghostLayerWidth-2}})*{{nDataPad}}, {{nDataPad}} ,0.0);
+{% endif %}{# nDim == 3 #}
+{% endif %}
+
+
+  // 3.Boundary extrapolation (left and right value per face)
+  {{m.allocateArray("wLx", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+  {{m.allocateArray("wRx", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+  {{m.allocateArray("wLy", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+  {{m.allocateArray("wRy", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+{% if nDim==3 %}
+  {{m.allocateArray("wLz", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+  {{m.allocateArray("wRz", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+{% endif %}
+
+  // wx, wy{{", wz" if nDim == 3}}
+  #pragma omp simd aligned(luhShort,wLx,wRx,slopeX,wLy,wRy,slopeY{{",wLz,wRz,slopeZ" if nDim == 3}}:ALIGNMENT)
+  for(int zyxn = 0; zyxn < {{nDofGS3D*nDofGS*nDofGS*nDataPad}}; zyxn++) {
+    wLx[zyxn] = luhShort[zyxn] - 0.5*cellSize*slopeX[zyxn];
+    wRx[zyxn] = luhShort[zyxn] + 0.5*cellSize*slopeX[zyxn];
+    wLy[zyxn] = luhShort[zyxn] - 0.5*cellSize*slopeY[zyxn];
+    wRy[zyxn] = luhShort[zyxn] + 0.5*cellSize*slopeY[zyxn];
+{% if nDim == 3 %}
+    wLz[zyxn] = luhShort[zyxn] - 0.5*cellSize*slopeZ[zyxn];
+    wRz[zyxn] = luhShort[zyxn] + 0.5*cellSize*slopeZ[zyxn];
+{% endif %}
+  }
+
+  // 4. Source evaluation, half time step evolution increment
+  
+  {{m.allocateArray("tmp_F", nVarPad*nDim, setToZero=True, forceStack=True) | indent(2)}}{#Required for Riemann solver even without flux#}  
+{% if useFlux %}
+  double* F[{{nDim}}] = {tmp_F, tmp_F + {{nVarPad}}{{", tmp_F + "~2*nVarPad if nDim==3}} };
+{% endif %}
+{% if useNCP %}
+  {{m.allocateArray("ncp", nVarPad, setToZero=True, forceStack=True) | indent(2)}}{##}
+{% endif %}
+  {{m.allocateArray("slopeT", nDofGS3D*nDofGS*nDofGS*nDataPad, setToZero=True) | indent(2)}}{##}
+
+  for(int z = 0; z < {{nDofGS3D}}; z++) {
+{% if nDim == 3 %}
+    x0[2] = cellCenter[2] + dx * (z*{{1.0/nDof}}-{{0.5/nDof+0.5}}); //linspace
+{% endif %}
+    for(int y = 0; y < {{nDofGS}}; y++) {
+      x0[1] = cellCenter[1] + dx * (y*{{1.0/nDof}}-{{0.5/nDof+0.5}}); //linspace
+      for(int x = 0; x < {{nDofGS}}; x++) {
+        if (
+            (y==0 && x==0) ||
+            (y==0 && x=={{nDof+1}}) ||
+            (y=={{nDof+1}}     && x==0) ||
+            (y=={{nDof+1}}     && x=={{nDof+1}})
+{% if nDim==3 %}
+            ||
+            (y==0 && z==0) ||
+            (y==0 && z=={{nDof+1}}) ||
+            (y=={{nDof+1}}     && z==0) ||
+            (y=={{nDof+1}}     && z=={{nDof+1}})
+            ||
+            (z==0 && x==0) ||
+            (z==0 && x=={{nDof+1}}) ||
+            (z=={{nDof+1}}     && x==0) ||
+            (z=={{nDof+1}}     && x=={{nDof+1}})
+{% endif %}
+        ) {
+          // skip all ghost cells where we do not have neighbour data
+        }
+        else {
+          x0[0] = cellCenter[0] + dx * (x*{{1.0/nDof}}-{{0.5/nDof+0.5}}); //linspace
+          const int zyx = ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}}; // zyx index
+          double* Qt = slopeT + zyx;
+
+{% if useSourceOrNCP %}
+          // fused Source
+{% if useSource %}
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::algebraicSource(x0, t, luhShort + zyx, Qt);
+{% else %}
+          std::memset(ncp, 0, {{nVarPad}}*sizeof(double));
+{% endif %}{# useSource #}
+{% if useNCP %}
+          {{m.gradQAdapter("gradQ", "slopeX+zyx", "slopeY+zyx", "slopeZ+zyx", nData) | indent(10)}}{##}
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::nonConservativeProduct(luhShort + zyx, gradQ, ncp);
+          #pragma omp simd aligned(Qt,ncp:ALIGNMENT)
+          for(int n=0; n<{{nVarPad}}; n++) {
+            Qt[n] -= ncp[n];
+          }
+{% endif %}{# useNCP #}
+
+{% endif %}{# useSourceOrNCP #}
+{% if useViscousFlux %}
+{% if not useNCP %}
+          {{m.gradQAdapter("gradQ", "slopeX+zyx", "slopeY+zyx", "slopeZ+zyx", nData) | indent(10)}}{# already allocated by the NCP step if ncp is used #}
+{% endif %}
+          // x fluxes
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::viscousFlux(wLx + zyx, gradQ, F); // FLx
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] += tmp_F[n] * invCellSize;
+          }
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::viscousFlux(wRx + zyx, gradQ, F); // FRx
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] -= tmp_F[n] * invCellSize;
+          }
+          // y fluxes
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::viscousFlux(wLy + zyx, gradQ, F); // FLy
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] += tmp_F[n+{{nVarPad}}] * invCellSize;
+          }
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::viscousFlux(wRy + zyx, gradQ, F); // FRy
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] -= tmp_F[n+{{nVarPad}}] * invCellSize;
+          }
+{% if nDim==3 %}
+          // z fluxes
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::viscousFlux(wLz + zyx, gradQ, F); // FLz
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] += tmp_F[n+{{2*nVarPad}}] * invCellSize;
+          }
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::viscousFlux(wRz + zyx, gradQ, F); // FRz
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] -= tmp_F[n+{{2*nVarPad}}] * invCellSize;
+          }
+{% endif %}{# nDim==3 #}
+{% elif useFlux %}{# useFlux but not useViscousFlux#}
+          // x fluxes
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::flux(wLx + zyx, F); // FLx
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] += tmp_F[n] * invCellSize;
+          }
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::flux(wRx + zyx, F); // FRx
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] -= tmp_F[n] * invCellSize;
+          }
+          // y fluxes
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::flux(wLy + zyx, F); // FLy
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] += tmp_F[n+{{nVarPad}}] * invCellSize;
+          }
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::flux(wRy + zyx, F); // FRy
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] -= tmp_F[n+{{nVarPad}}] * invCellSize;
+          }
+{% if nDim==3 %}
+          // z fluxes
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::flux(wLz + zyx, F); // FLz
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] += tmp_F[n+{{2*nVarPad}}] * invCellSize;
+          }
+          #ifdef USE_IPO
+            #pragma forceinline recursive
+          #endif
+          solver.{{solverName}}::flux(wRz + zyx, F); // FRz
+          #pragma omp simd aligned(Qt,tmp_F:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            Qt[n] -= tmp_F[n+{{2*nVarPad}}] * invCellSize;
+          }
+{% endif %}{# nDim==3 #}
+{% endif %}{# useViscousFlux or useFlux #}
+
+          // evolve boundary states
+          #pragma omp simd aligned(Qt,wLx,wRx,wLy,wRy{{",wLz,wRz" if nDim == 3}}:ALIGNMENT)
+          for (int n = 0; n < {{nVarPad}}; n++) {
+            wLx[zyx+n] += 0.5 * dt * Qt[n];
+            wRx[zyx+n] += 0.5 * dt * Qt[n];
+            wLy[zyx+n] += 0.5 * dt * Qt[n];
+            wRy[zyx+n] += 0.5 * dt * Qt[n];
+{% if nDim==3 %}
+            wLz[zyx+n] += 0.5 * dt * Qt[n];
+            wRz[zyx+n] += 0.5 * dt * Qt[n];
+{% endif %}{# nDim==3 #}
+          }
+        }
+      }
+    }
+  }
+
+  // 4. Solve Riemann problems
+  double* fL = tmp_F;
+  double* fR = tmp_F+{{nVarPad}};
+  double dt_max_allowed = std::numeric_limits<double>::max();
+
+  // x edges
+  for(int z = {{1 if nDim==3 else 0}}; z < {{nDof3D+1 if nDim==3 else 1}}; z++) {
+    for (int y = 1; y < {{nDof+1}}; y++) {
+      for (int x = 0; x < {{nDof+1}}; x++) {
+{% if useViscousFlux %}
+        {{m.gradQAdapter("gradQL", "slopeX+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeY+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeZ+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, nData) | indent(8)}}{##}
+        {{m.gradQAdapter("gradQR", "slopeX+((z*"~nDofGS~"+y)*"~nDofGS~"+x+1)*"~nDataPad, "slopeY+((z*"~nDofGS~"+y)*"~nDofGS~"+x+1)*"~nDataPad, "slopeZ+((z*"~nDofGS~"+y)*"~nDofGS~"+x+1)*"~nDataPad, nData) | indent(8)}}{##}
+        double s_max_x = solver.{{solverName}}::riemannSolver(
+                fL, fR,
+                wRx + ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+                wLx + ((z*{{nDofGS}}+y)*{{nDofGS}}+x+1)*{{nDataPad}},
+                gradQL, gradQR,
+                cellSizeArray,
+                0
+            );
+{% else %}
+        double s_max_x = solver.{{solverName}}::riemannSolver(
+                fL, fR,
+                wRx + ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+                wLx + ((z*{{nDofGS}}+y)*{{nDofGS}}+x+1)*{{nDataPad}},
+                nullptr, nullptr,
+                cellSizeArray,
+                0
+            );
+{% endif %}
+        dt_max_allowed = std::min(dt_max_allowed, cflFactor / DIMENSIONS * cellSize / s_max_x);
+
+        #pragma omp simd aligned(fL,fR:ALIGNMENT)
+        for (int n = 0; n < {{nData}}; n++) {
+          luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] -= invCellSizeTimesDt * fL[n];
+          luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+2)*{{nData}}+n] += invCellSizeTimesDt * fR[n];
+        }
+      }
+    }
+  }
+
+  // y edges
+  for(int z = {{1 if nDim==3 else 0}}; z < {{nDof3D+1 if nDim==3 else 1}}; z++) {
+    for (int y = 0; y < {{nDof+1}}; y++) {
+      for (int x = 1; x < {{nDof+1}}; x++) {
+{% if useViscousFlux %}
+        {{m.gradQAdapter("gradQL", "slopeX+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeY+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeZ+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, nData) | indent(8)}}{##}
+        {{m.gradQAdapter("gradQR", "slopeX+((z*"~nDofGS~"+y+1)*"~nDofGS~"+x)*"~nDataPad, "slopeY+((z*"~nDofGS~"+y+1)*"~nDofGS~"+x)*"~nDataPad, "slopeZ+((z*"~nDofGS~"+y+1)*"~nDofGS~"+x)*"~nDataPad, nData) | indent(8)}}{##}
+        double s_max_y = solver.{{solverName}}::riemannSolver(
+            fL, fR,
+            wRy + ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+            wLy + ((z*{{nDofGS}}+y+1)*{{nDofGS}}+x)*{{nDataPad}},
+            gradQL, gradQR,
+            cellSizeArray,
+            1
+        );
+{% else %}
+        double s_max_y = solver.{{solverName}}::riemannSolver(
+            fL, fR,
+            wRy + ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+            wLy + ((z*{{nDofGS}}+y+1)*{{nDofGS}}+x)*{{nDataPad}},
+            nullptr, nullptr,
+            cellSizeArray,
+            1
+        );
+{% endif %}
+        dt_max_allowed = std::min(dt_max_allowed, cflFactor / DIMENSIONS * cellSize / s_max_y);
+
+        #pragma omp simd aligned(fL,fR:ALIGNMENT)
+        for (int n = 0; n < {{nVar}}; n++) {
+          luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] -= invCellSizeTimesDt * fL[n];
+          luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+2)*{{nDofG}}+x+1)*{{nData}}+n] += invCellSizeTimesDt * fR[n];
+        }
+      }
+    }
+  }
+{% if nDim ==3 %}
+  // z edges
+  for(int z = 0; z < {{nDof+1}}; z++) {
+    for (int y = 1; y < {{nDof+1}}; y++) {
+      for (int x = 1; x < {{nDof+1}}; x++) {
+{% if useViscousFlux %}
+        {{m.gradQAdapter("gradQL", "slopeX+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeY+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeZ+((z*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, nData) | indent(8)}}{##}
+        {{m.gradQAdapter("gradQR", "slopeX+(((z+1)*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeY+(((z+1)*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, "slopeZ+(((z+1)*"~nDofGS~"+y)*"~nDofGS~"+x)*"~nDataPad, nData) | indent(8)}}{##}
+        double s_max_z = solver.{{solverName}}::riemannSolver(
+            fL, fR,
+            wRz + ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+            wLz + (((z+1)*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+            gradQL, gradQR,
+            cellSizeArray,
+            2
+        );
+{% else %}
+        double s_max_z = solver.{{solverName}}::riemannSolver(
+            fL, fR,
+            wRz + ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+            wLz + (((z+1)*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}},
+            nullptr, nullptr,
+            cellSizeArray,
+            2
+        );
+{% endif %}
+        dt_max_allowed = std::min(dt_max_allowed, cflFactor / DIMENSIONS * cellSize / s_max_z);
+
+        #pragma omp simd aligned(fL,fR:ALIGNMENT)
+        for (int n = 0; n < {{nVar}}; n++) {
+          luh[(((z+1)*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] -= invCellSizeTimesDt * fL[n];
+          luh[(((z+2)*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] += invCellSizeTimesDt * fR[n];
+        }
+      }
+    }
+  }
+{% endif %}
+
+  // TODO(guera): Early exit if dt > dt_max_allowed?!
+
+  // 5. Evolve, evaluate source, update cells
+{% if useSourceOrNCP %}
+  {{m.allocateArray("src", nVarPad, setToZero=True, forceStack=True) | indent(2)}}{##}
+  for(int z = {{1 if nDim==3 else 0}}; z < {{nDof3D+1 if nDim==3 else 1}}; z++) {
+    x0[2] = cellCenter[2] + dx * (z*{{1.0/nDof}}-{{0.5/nDof+0.5}});
+    for (int y = 1; y < {{nDof+1}}; y++) {
+      x0[1] = cellCenter[1] + dx * (y*{{1.0/nDof}}-{{0.5/nDof+0.5}});
+      for (int x = 1; x < {{nDof+1}}; x++) {
+        x0[0] = cellCenter[0] + dx * (x*{{1.0/nDof}}-{{0.5/nDof+0.5}});
+        const int zyx = ((z*{{nDofGS}}+y)*{{nDofGS}}+x)*{{nDataPad}}; // zyx index
+        #pragma omp simd aligned(luhShort,slopeT:ALIGNMENT)
+        for (int n = 0; n < {{nVarPad}}; n++) {
+          luhShort[zyx+n] += 0.5 * dt * slopeT[zyx+n]; // idx_w ~ idx_slopet
+        }
+
+{% if useSource %}
+        solver.{{solverName}}::algebraicSource(x0, t + 0.5 * dt, luhShort+zyx, src);
+{% else %}
+        std::memset(src, 0, {{nVarPad}}*sizeof(double));
+{% endif %}
+{% if useNCP %}
+        {{m.gradQAdapter("gradQ", "slopeX+zyx", "slopeY+zyx", "slopeZ+zyx", nData) | indent(8)}}
+        solver.{{solverName}}::nonConservativeProduct(luhShort+zyx, gradQ, ncp);
+        #pragma omp simd aligned(src,ncp:ALIGNMENT)
+        for (int n = 0; n < {{nVarPad}}; n++) {
+          src[n] -= ncp[n];
+        }
+{% endif %}
+
+        #pragma omp simd aligned(src:ALIGNMENT)
+        for (int n = 0; n < {{nVar}}; n++) {
+          luh[(({{"(z+1)" if nDim==3 else 0}}*{{nDofG}}+y+1)*{{nDofG}}+x+1)*{{nData}}+n] += dt * src[n];
+        }
+      }
+    }
+  }
+{% endif %}{# useSourceOrNCP #}
+
+  {{m.freeArray("luhShort") | indent(2)}}{##}
+  {{m.freeArray("slopeX") | indent(2)}}{##}
+  {{m.freeArray("slopeY") | indent(2)}}{##}
+  {{m.freeArray("slopeT") | indent(2)}}{##}
+  {{m.freeArray("wLx") | indent(2)}}{##}
+  {{m.freeArray("wRx") | indent(2)}}{##}
+  {{m.freeArray("wLy") | indent(2)}}{##}
+  {{m.freeArray("wRy") | indent(2)}}{##}
+{% if nDim == 3%}
+  {{m.freeArray("slopeZ") | indent(2)}}{##}
+  {{m.freeArray("wLz") | indent(2)}}{##}
+  {{m.freeArray("wRz") | indent(2)}}{##}
+{% endif %}
+
+  return dt_max_allowed;
+}
